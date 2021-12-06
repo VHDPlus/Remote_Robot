@@ -1,0 +1,311 @@
+Main
+(
+
+    Encoder_L           : IN STD_LOGIC;   --E2.1
+    Encoder_R           : IN STD_LOGIC;   --E1.1
+
+    Motor_LF            : OUT STD_LOGIC;  --M2.1
+    Motor_LB            : OUT STD_LOGIC;  --M2.2
+    Motor_RF            : OUT STD_LOGIC;  --M1.1
+    Motor_RB            : OUT STD_LOGIC;  --M1.2
+
+    BTN     : IN  STD_LOGIC; --Press to switch between program and normal mode
+    LED     : OUT STD_LOGIC; --Lights up in program mode
+
+    RX      : IN  STD_LOGIC; --PC
+    TX      : OUT STD_LOGIC;
+
+    WiFi_TX : IN  STD_LOGIC; --WiFi
+    WiFi_RX : OUT STD_LOGIC;
+
+)
+{
+    
+--GENERATED SIGNALS---------------------------------------------------------------------------------------------
+
+    --Motor and Encoder----------------------------------------------------------------------------------------
+
+    --        xxxxx
+    --      x \ N / x
+    --    x  P \ / P  x
+    --    x-----O-----x   <- Encoder disc with north and south poles
+    --    x  N / \ N  x       -> Change from N to P causes one increment
+    --      x / P \ x         -> Holes_In_Disk = number of N/P pairs
+    --        xxxxx
+    --
+    --        xxxxx
+    --      x \XXX/ x
+    --    x    \X/    x
+    --    x-----O-----x   <- Encoder disc with holes
+    --    xXXXX/ \XXXXx       -> Change from black disk to hole causes one increment
+    --      xX/   \Xx         -> Holes_In_Disk = number of holes
+    --        xxxxx
+    --
+    -- If you don't know the number of poles, you can connect the encoder input with an LED (LED <= Encoder_L),
+    -- turn the encoder disk 360° and count how often the LED changes from off to on.
+    CONSTANT Motor_Holes_In_Disk          : NATURAL := 11;
+    -- __
+    --|  |   _________________
+    --|  |  | turns  | turns  | |
+    --|  ---    1    <- 150   --| <- encoder
+    --|  |  |_time___|_times__| |
+    --|__|
+    --
+    -- If you don't know the gear reduction ratio, you can count how often you have to turn the encoder disk
+    -- until you made a 360° turn with the wheel
+    CONSTANT Motor_Gear_Ratio             : NATURAL := 150;
+    --     ----->-----  <- Circumference
+    --    /   xxxxx   \
+    --   /  x  /|\  x  \
+    --  | x     |<- D x |  Example: Wheel diameter   = 80mm
+    -- /|\x     O     x\|/          -> Circumference = 80mm * pi = 80mm * 3.14
+    --  | x     |     x |                            = 251mm
+    --   \  x  \|/  x  /
+    --    \   xxxxx   /
+    --     -----<-----
+    CONSTANT Motor_Wheel_Circumference    : NATURAL := 251;
+
+    --------------------------------------------------------------------------------
+    --The Controller keeps driving while Drive_L > Driven_L and Drive_R > Driven_R--
+    --------------------------------------------------------------------------------
+
+    SIGNAL Motor_RST_Drive           : STD_LOGIC := '0';                     --'1' => Controller sets Driven to 0
+    SIGNAL Motor_Drive_L             : INTEGER   range -10000 to 10000 := 0; --Sets distance to drive with the left motor
+    SIGNAL Motor_Drive_R             : INTEGER   range -10000 to 10000 := 0; --Sets distance to drive with the right motor
+    SIGNAL Motor_Drive_Speed         : NATURAL   range 0 to 255 := 255;      --Sets speed of the motors (0 - 255)
+    SIGNAL Motor_Finished            : STD_LOGIC;                            --Controller sets Finished to '1' if distances are reached
+
+    SIGNAL Motor_Driven_L            : NATURAL   range 0 to 10000;           --driven distance with left motor
+    SIGNAL Motor_Driven_R            : NATURAL   range 0 to 10000;           --driven distance with right motor
+    SIGNAL Motor_Error               : STD_LOGIC;                            --'1' if a motor doesn't turn or there is a problem with the encoder
+    SIGNAL Current_Speed_L           : NATURAL   range 0 to 10000 := 0;
+    SIGNAL Current_Speed_R           : NATURAL   range 0 to 10000 := 0;
+    
+    --WiFi Extension----------------------------------------------------------------------------------------
+
+    --Program_Mode = '0'
+    --PC -> Core <- WiFi
+    --PC <- Core -> WiFi
+    --Program_Mode = '1'
+    --PC ->  ->  -> WiFi
+    --PC <-  <-  <- WiFi
+
+    SIGNAL Program_Mode : STD_LOGIC := '0'; --Enable Program mode to program ESP8266 without interferrance
+
+    Connections
+    {
+        BTN => BTN_1,
+        LED => LED_1,
+
+        RX  => UART_TXD,
+        TX  => UART_RXD,
+
+        WiFi_RX => LS_4,
+        WiFi_TX => LS_7,
+    }
+
+--GENERATED CODE------------------------------------------------------------------------------------------------
+
+    --Motor and Encoder----------------------------------------------------------------------------------------
+
+    SIGNAL Drive_Start    : STD_LOGIC := '0';
+    SIGNAL Drive_Running  : STD_LOGIC := '0';
+    SIGNAL Drive_Length   : NATURAL range 0 to 10000 := 100;
+    SIGNAL Drive_Speed    : NATURAL range 0 to 255 := 230;
+    SIGNAL Drive_Direcion : NATURAL range 0 to 3 := 0; --0 = forward, 1 = left, 2 = right, 3 = backwards
+    --Motor_Error
+    --Current_Speed_L
+    --Current_Speed_R
+    
+    Process Motor_Control ()
+    {
+        Thread
+        {
+            VARIABLE Right_Direction : INTEGER range -1 to 1 := 1;
+            VARIABLE Left_Direction  : INTEGER range -1 to 1 := 1;
+            
+            While(Drive_Start = '1'){} --Wait until drive start is reset
+            Drive_Running <= '0';
+            While(Drive_Start = '0'){} --Wait for drive start
+            Drive_Running <= '1';
+            
+            If(Drive_Direcion < 2) { Right_Direction :=  1; } --forward or left
+            Else                   { Right_Direction := -1; }
+            
+            If(Drive_Direcion mod 2 = 0) { Left_Direction :=  1; } --forward or right
+            Else                         { Left_Direction := -1; }
+            
+            Motor_Drive_L     <= Drive_Length * Left_Direction;
+            Motor_Drive_R     <= Drive_Length * Right_Direction;
+            Motor_Drive_Speed <= Drive_Speed;
+            NewFunction driveRoute (Motor_RST_Drive, Motor_Finished);
+        }
+    }
+
+    --WiFi Extension----------------------------------------------------------------------------------------
+
+    
+    
+    Process WiFi_Control ()
+    {
+        Thread
+        {
+            --Receive message from wifi module
+            NewFunction newString (messageStr);
+            NewFunction readString (messageStr, UART_RX_Data, UART_RX_Busy);
+            --Get operation indicator char
+            messageStr.Address <= 0;
+            SIGNAL Operation : STD_LOGIC_VECTOR(7 downto 0);
+            Step { Operation <= messageStr.Data_OUT; }
+            --Get data after char
+            NewFunction newString (dataStr);
+            NewFunction substring (messageStr, 1, messageStr.Length-1, dataStr);
+            SIGNAL data : NATURAL range 0 to 10000;
+            If(dataStr.Length > 0)
+            {
+                NewFunction stringToNatural (dataStr, data);
+            }
+            
+            --Do operation
+            --Message: l100 <- 1. char = operation, then data
+            --Operations: r = route, b = return to base, n = new route, m = move in direction, s = speed, l = length
+            --Data: r1-3, b, n1-3, m0-4 (4 = stop), s0-255, l0-10000
+            Case(Operation)
+            {
+                When(s"r")
+                {
+                    --Start route
+                }
+                When(s"b")
+                {
+                    --Return to base
+                }
+                When(s"n")
+                {
+                    --Create route
+                }
+                When(s"m")
+                {
+                    If(data < 4)
+                    {
+                        Drive_Direcion <= data;
+                        Drive_Start    <= '1';
+                        While(Drive_Running = '0'){}
+                        Drive_Start    <= '0';
+                        --Save route
+                    }
+                    Else
+                    {
+                        --Stop Route
+                    }
+                }
+                When(s"s")
+                {
+                    Drive_Speed <= data;
+                    --Save for route
+                }
+                When(s"l")
+                {
+                    Drive_Length <= data;
+                    --Save for route
+                }
+                When(others)
+                {
+                    null;
+                }
+            }
+        }
+    }
+
+    --Press Button to switch between program and normal mode
+    Process Program_Control () {
+        Thread {
+            While(BTN = '1'){ Wait(100ms); }
+            Program_Mode <= NOT Program_Mode;
+            While(BTN = '0'){ Wait(100ms); }
+        }
+    }
+
+    --Indicate program mode
+    LED <= Program_Mode;
+
+    --Sends data from UART Interface to PC and ESP8266
+    TX <= WiFi_TX when Program_Mode = '1' else UART_TX;
+    WiFi_RX <= RX when Program_Mode = '1' else UART_TX;
+    --Receive Data from PC and ESP8266
+    UART_RX <= WiFi_TX AND RX when Program_Mode = '0' else '1';
+
+--GENERATED COMPONENTS------------------------------------------------------------------------------------------
+
+    --Motor and Encoder----------------------------------------------------------------------------------------
+
+
+    NewComponent Motor_Controller
+    (
+        CLK_Frequency       => 12000000,
+        PWM_Frequency       => 100000,
+        Bits_Resolution     => 8,
+        Holes_In_Disk       => Motor_Holes_In_Disk,
+        Gear_Ratio          => Motor_Gear_Ratio,
+        Wheel_Circumference => Motor_Wheel_Circumference,
+        Debounce_Cycles     => 500,
+        Max_Length          => 10000,
+        Error_Delay         => 500,
+        Correction_Step     => 1,
+        Correction_Cycles   => 1,
+        Length_Corr_Step    => 25,
+        Max_Length_Diff     => 10,
+        Accel_Length        => 50,
+        Brake_Length        => 100,
+        Accel_Speed         => 50,
+        Brake_Speed         => 100,
+        Max_Turn_Time       => 2000,
+
+        Reset               => '0',
+        Encoder_L           => Encoder_L,
+        Encoder_R           => Encoder_R,
+        Motor_LF            => Motor_LF,
+        Motor_LB            => Motor_LB,
+        Motor_RF            => Motor_RF,
+        Motor_RB            => Motor_RB,
+        Enable              => '1',
+        RST_Drive           => Motor_RST_Drive,
+        Drive_L             => Motor_Drive_L,
+        Drive_R             => Motor_Drive_R,
+        Drive_Speed         => Motor_Drive_Speed,
+        Speed_L             => Current_Speed_L,
+        Speed_R             => Current_Speed_R,
+        Driven_L            => Motor_Driven_L,
+        Driven_R            => Motor_Driven_R,
+        Finished            => Motor_Finished,
+        Error               => Motor_Error,
+        Correction          => open,
+    );
+
+    --WiFi Extension----------------------------------------------------------------------------------------
+
+
+    --UART interface for connection
+    SIGNAL UART_RX            : STD_LOGIC := '1';
+    SIGNAL UART_TX            : STD_LOGIC := '1';
+    SIGNAL UART_TX_Enable     : STD_LOGIC := '0';
+    SIGNAL UART_TX_Busy       : STD_LOGIC := '0';
+    SIGNAL UART_TX_Data       : STD_LOGIC_VECTOR (8-1 DOWNTO 0) := (others => '0');
+    SIGNAL UART_RX_Busy       : STD_LOGIC := '0';
+    SIGNAL UART_RX_Data       : STD_LOGIC_VECTOR (8-1 DOWNTO 0) := (others => '0');
+    SIGNAL UART_RX_Error      : STD_LOGIC := '0';
+    NewComponent UART_Interface
+    (
+        CLK_Frequency => 12000000,
+        Baud_Rate     => 19200,
+
+        RX            => UART_RX,
+        TX            => UART_TX,
+        TX_Enable     => UART_TX_Enable,
+        TX_Busy       => UART_TX_Busy,
+        TX_Data       => UART_TX_Data,
+        RX_Busy       => UART_RX_Busy,
+        RX_Data       => UART_RX_Data,
+        RX_Error      => UART_RX_Error,
+    );
+}
