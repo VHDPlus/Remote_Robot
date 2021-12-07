@@ -211,7 +211,7 @@ Main
             --Do operation
             --Message: l100 <- 1. char = operation, then data
             --Operations: r = route, b = return to base, n = new route, m = move in direction, s = speed, l = length
-            --Data: r1-3, b1-3, n1-3, m0-4 (4 = stop), s0-255, l0(-1*Max_Length)
+            --Data: r1-3, b1-3, n1-3, m0-4 (4 = stop), s0-255, l0-10000
             Case(Operation)
             {
                 When(s"r")
