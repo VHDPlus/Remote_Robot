@@ -68,18 +68,20 @@ Main
     --------------------------------------------------------------------------------
     --The Controller keeps driving while Drive_L > Driven_L and Drive_R > Driven_R--
     --------------------------------------------------------------------------------
+    
+    CONSTANT Max_Length : NATURAL := 10000;
 
     SIGNAL Motor_RST_Drive           : STD_LOGIC := '0';                     --'1' => Controller sets Driven to 0
-    SIGNAL Motor_Drive_L             : INTEGER   range -10000 to 10000 := 0; --Sets distance to drive with the left motor
-    SIGNAL Motor_Drive_R             : INTEGER   range -10000 to 10000 := 0; --Sets distance to drive with the right motor
+    SIGNAL Motor_Drive_L             : INTEGER   range (-1*Max_Length) to Max_Length := 0; --Sets distance to drive with the left motor
+    SIGNAL Motor_Drive_R             : INTEGER   range (-1*Max_Length) to Max_Length := 0; --Sets distance to drive with the right motor
     SIGNAL Motor_Drive_Speed         : NATURAL   range 0 to 255 := 255;      --Sets speed of the motors (0 - 255)
     SIGNAL Motor_Finished            : STD_LOGIC;                            --Controller sets Finished to '1' if distances are reached
 
-    SIGNAL Motor_Driven_L            : NATURAL   range 0 to 10000;           --driven distance with left motor
-    SIGNAL Motor_Driven_R            : NATURAL   range 0 to 10000;           --driven distance with right motor
+    SIGNAL Motor_Driven_L            : NATURAL   range 0 to Max_Length;           --driven distance with left motor
+    SIGNAL Motor_Driven_R            : NATURAL   range 0 to Max_Length;           --driven distance with right motor
     SIGNAL Motor_Error               : STD_LOGIC;                            --'1' if a motor doesn't turn or there is a problem with the encoder
-    SIGNAL Current_Speed_L           : NATURAL   range 0 to 10000 := 0;
-    SIGNAL Current_Speed_R           : NATURAL   range 0 to 10000 := 0;
+    SIGNAL Current_Speed_L           : NATURAL   range 0 to Max_Length := 0;
+    SIGNAL Current_Speed_R           : NATURAL   range 0 to Max_Length := 0;
     
     --WiFi Extension----------------------------------------------------------------------------------------
 
@@ -110,7 +112,7 @@ Main
 
     SIGNAL Drive_Start    : STD_LOGIC := '0';
     SIGNAL Drive_Running  : STD_LOGIC := '0';
-    SIGNAL Drive_Length   : NATURAL range 0 to 10000 := 100;
+    SIGNAL Drive_Length   : NATURAL range 0 to Max_Length := 100;
     SIGNAL Drive_Speed    : NATURAL range 0 to 255 := 230;
     SIGNAL Drive_Direcion : NATURAL range 0 to 3 := 0; --0 = forward, 1 = left, 2 = right, 3 = backwards
     --Motor_Error
@@ -119,12 +121,16 @@ Main
     
     Process Motor_Control ()
     {
+        If(Stop = '0')
+        {
+            Stopped <= '0';
+        }
+        
         Thread
         {
             VARIABLE Right_Direction : INTEGER range -1 to 1 := 1;
             VARIABLE Left_Direction  : INTEGER range -1 to 1 := 1;
             
-            While(Drive_Start = '1'){} --Wait until drive start is reset
             Drive_Running <= '0';
             While(Drive_Start = '0'){} --Wait for drive start
             Drive_Running <= '1';
@@ -138,16 +144,52 @@ Main
             Motor_Drive_L     <= Drive_Length * Left_Direction;
             Motor_Drive_R     <= Drive_Length * Right_Direction;
             Motor_Drive_Speed <= Drive_Speed;
-            NewFunction driveRoute (Motor_RST_Drive, Motor_Finished);
+            NewFunction startRoute (Motor_RST_Drive, Motor_Finished);
+            While(Motor_Finished = '0')
+            {
+                If(Stop = '1')
+                {
+                    Motor_Drive_L <= 0;
+                    Motor_Drive_R <= 0;
+                    Motor_RST_Drive <= '1';
+                    Step { Motor_RST_Drive <= '0'; }
+                    Stopped <= '1';
+                }
+            }
         }
     }
 
     --WiFi Extension----------------------------------------------------------------------------------------
-
     
+    CONSTANT Max_Route_Elements : NATURAL := 100;
+    CONSTANT Routes             : NATURAL := 3;
+    
+    TYPE Length_Array_Type    IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to Max_Length;
+    TYPE Length_Type          IS ARRAY (0 to Routes-1)               OF Length_Array_Type;
+    TYPE Speed_Array_Type     IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to 255;
+    TYPE Speed_Type           IS ARRAY (0 to Routes-1)               OF Speed_Array_Type;
+    TYPE Direction_Array_Type IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to 3;
+    TYPE Direction_Type       IS ARRAY (0 to Routes-1)               OF Direction_Array_Type;
+    TYPE Element_Type         IS ARRAY (0 to Routes-1)               OF NATURAL range 0 to Max_Route_Elements;
+
+    SIGNAL Elements      : Element_Type := (others => 0);
+    SIGNAL Lengths       : Length_Type;
+    SIGNAL Speeds        : Speed_Type;
+    SIGNAL Directions    : Direction_Type;
+    SIGNAL Current_Route : NATURAL range 0 to Routes := 0;
+    SIGNAL Return_Route  : NATURAL range 0 to Routes := 0;
+    SIGNAL Edit_Route    : NATURAL range 0 to Routes := 0;
+    SIGNAL Stop          : STD_LOGIC := '0';
+    SIGNAL Stopped       : STD_LOGIC := '0';
     
     Process WiFi_Control ()
     {
+        If(Stopped = '1')
+        {
+            Stop <= '0';
+        }
+        
+        --Receive Thread
         Thread
         {
             --Receive message from wifi module
@@ -160,7 +202,7 @@ Main
             --Get data after char
             NewFunction newString (dataStr);
             NewFunction substring (messageStr, 1, messageStr.Length-1, dataStr);
-            SIGNAL data : NATURAL range 0 to 10000;
+            SIGNAL data : NATURAL range 0 to Max_Length;
             If(dataStr.Length > 0)
             {
                 NewFunction stringToNatural (dataStr, data);
@@ -169,20 +211,29 @@ Main
             --Do operation
             --Message: l100 <- 1. char = operation, then data
             --Operations: r = route, b = return to base, n = new route, m = move in direction, s = speed, l = length
-            --Data: r1-3, b, n1-3, m0-4 (4 = stop), s0-255, l0-10000
+            --Data: r1-3, b1-3, n1-3, m0-4 (4 = stop), s0-255, l0(-1*Max_Length)
             Case(Operation)
             {
                 When(s"r")
                 {
                     --Start route
+                    Current_Route <= data;
+                    Return_Route  <= 0;
+                    Edit_Route    <= 0;
                 }
                 When(s"b")
                 {
                     --Return to base
+                    Current_Route <= 0;
+                    Return_Route  <= data;
+                    Edit_Route    <= 0;
                 }
                 When(s"n")
                 {
                     --Create route
+                    Current_Route <= 0;
+                    Return_Route  <= 0;
+                    Edit_Route    <= data;
                 }
                 When(s"m")
                 {
@@ -193,10 +244,22 @@ Main
                         While(Drive_Running = '0'){}
                         Drive_Start    <= '0';
                         --Save route
+                        If(Edit_Route > 0)
+                        {
+                            Elements  (Edit_Route-1)                       <= Elements(Edit_Route-1) + 1;
+                            Lengths   (Edit_Route-1)(Elements(Edit_Route)) <= Drive_Length;
+                            Speeds    (Edit_Route-1)(Elements(Edit_Route)) <= Drive_Speed;
+                            Directions(Edit_Route-1)(Elements(Edit_Route)) <= Drive_Direcion;
+                        }
+                        While(Drive_Running = '1'){}
                     }
                     Else
                     {
                         --Stop Route
+                        Current_Route <= 0;
+                        Return_Route  <= 0;
+                        Edit_Route    <= 0;
+                        Stop          <= '1';
                     }
                 }
                 When(s"s")
@@ -212,6 +275,50 @@ Main
                 When(others)
                 {
                     null;
+                }
+            }
+        }
+        
+        --Motor Thread
+        Thread
+        {
+            --Wait until Robot should drive route
+            While(Current_Route = 0 AND Return_Route = 0){}
+            VARIABLE Element_Step : NATURAL range 0 to Max_Route_Elements := 0;
+            VARIABLE Element_End  : NATURAL range 0 to Max_Route_Elements := 0;
+            Element_Step := 0;
+            If(Current_Route > 0)
+            {
+                Element_Step := Elements(Current_Route-1);
+            }
+            Else
+            {
+                Element_Step := Elements(Return_Route-1);
+            }
+            VARIABLE Current_Route_Reg : NATURAL range 0 to Routes := 0;
+            VARIABLE Return_Route_Reg  : NATURAL range 0 to Routes := 0;
+            Current_Route_Reg := Current_Route;
+            Return_Route_Reg  := Return_Route;
+            --Drive route until ready or route stopped
+            If(Current_Route /= 0 OR Return_Route /= 0)
+            {
+                While(Current_Route = Current_Route_Reg AND Return_Route = Return_Route_Reg AND Element_Step < Element_End)
+                {
+                    If(Current_Route > 0)
+                    {
+                        Drive_Direcion <= Directions(Current_Route-1)(Element_Step);
+                    }
+                    Else
+                    {
+                        --Do the same backwards
+                        Drive_Direcion <= 3-Directions(Current_Route-1)(Element_Step);
+                    }
+                    Drive_Speed    <= Speeds    (Current_Route-1)(Element_Step);
+                    Drive_Length   <= Lengths   (Current_Route-1)(Element_Step);
+                    Drive_Start    <= '1';
+                    While(Drive_Running = '0'){}
+                    Drive_Start    <= '0';
+                    Element_Step := Element_Step + 1;
                 }
             }
         }
@@ -249,7 +356,7 @@ Main
         Gear_Ratio          => Motor_Gear_Ratio,
         Wheel_Circumference => Motor_Wheel_Circumference,
         Debounce_Cycles     => 500,
-        Max_Length          => 10000,
+        Max_Length          => Max_Length,
         Error_Delay         => 500,
         Correction_Step     => 1,
         Correction_Cycles   => 1,
