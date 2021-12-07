@@ -158,6 +158,48 @@ Main
             }
         }
     }
+    
+    Process State_Update ()
+    {
+        VARIABLE Motor_Finished_Reg : STD_LOGIC := '1';
+        VARIABLE Motor_Error_Reg    : STD_LOGIC := '0';
+        Thread
+        {
+            If(Motor_Finished_Reg /= Motor_Finished OR Motor_Error_Reg /= Motor_Error)
+            {
+                Motor_Finished_Reg := Motor_Finished;
+                Motor_Error_Reg    := Motor_Error;
+                NewFunction write (s"u", UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+                If(Motor_Error_Reg = '1')
+                {
+                    NewFunction write (s"2", UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+                }
+                Elsif(Motor_Finished_Reg = '0')
+                {
+                    NewFunction write (s"1", UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+                }
+                Else
+                {
+                    NewFunction write (s"0", UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+                }
+            }
+            Wait(200ms);
+            NewFunction newString (valueStr);
+            Step
+            {
+                SIGNAL Max_Speed : NATURAL range 0 to Max_Length;
+                Max_Speed <= Current_Speed_L;
+                If(Current_Speed_R > Current_Speed_L)
+                {
+                    Max_Speed <= Current_Speed_R;
+                }
+            }
+            NewFunction naturalToStringInst (Max_Speed, valueStr, bcdEna, bcdBus, bcdBin, bcdDec);
+            NewFunction write (s"s", UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+            NewFunction printString (valueStr, UART_TX_Data, UART_TX_Busy, UART_TX_Enable);
+            Wait(200ms);
+        }
+    }
 
     --WiFi Extension----------------------------------------------------------------------------------------
     
