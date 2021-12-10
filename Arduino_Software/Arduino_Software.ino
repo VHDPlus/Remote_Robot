@@ -16,9 +16,7 @@ void setup() {
     remote.begin(ssid, password);
 
     remote.onButtonHandler(&onButton);
-    remote.onSwitchHandler(&onSwitch);
     remote.onSliderHandler(&onSlider);
-    remote.onConsoleHandler(&onConsole);
 
     Serial.print("IP Address: ");
     Serial.println(WiFi.localIP());
@@ -29,8 +27,8 @@ long l = 0;
 
 int state = 0;
 int speed = 0;
-int lastState = 0;
-int lastSpeed = 0;
+int lastState = -1;
+int lastSpeed = -1;
 
 void loop(){
     remote.run();
@@ -38,7 +36,7 @@ void loop(){
     if (Serial.available() > 0){
         String message = Serial.readString();
         if (message.length() > 0){
-            String data = message.substring(0);
+            String data = message.substring(1);
             if (data.length() > 0){
                 int d = data.toInt();
                 if (message.charAt(0) == 'u') state = d;
@@ -52,13 +50,13 @@ void loop(){
         l = t;
         
         if (state != lastState){
-            if (state == 0)      setDisplay("1", "Waiting");
-            else if (state == 1) setDisplay("1", "Running");
-            else                 setDisplay("1", "Error");
+            if (state == 0)      remote.setDisplay("1", "Waiting");
+            else if (state == 1) remote.setDisplay("1", "Running");
+            else                 remote.setDisplay("1", "Error");
         }
         
         if (speed != lastSpeed){
-            setDisplay("2", String(speed));
+            remote.setDisplay("2", String(speed));
         }
         
         lastState = state;

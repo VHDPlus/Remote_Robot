@@ -33,3 +33,5 @@ mem_init/
 
 ## Python
 *__pycache__*
+
+Arduino_Software/build
