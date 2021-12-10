@@ -446,7 +446,7 @@ Main
     NewComponent UART_Interface
     (
         CLK_Frequency => 12000000,
-        Baud_Rate     => 19200,
+        Baud_Rate     => 115200,
 
         RX            => UART_RX,
         TX            => UART_TX,

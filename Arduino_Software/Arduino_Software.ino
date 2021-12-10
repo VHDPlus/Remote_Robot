@@ -1,13 +1,14 @@
 //Bibliotheken für die Kommunikation mit WiFi Geräten
 #include "vhdplus_remote.h"
 
-const char* ssid = "SSID"; //SSID aus dem Router
-const char* password = "Passwort"; //Passwort für den Zugang zum WLAN
+const char* ssid = "FRITZ!Box 7490"; //SSID aus dem Router
+const char* password = "03643066197615603960"; //Passwort für den Zugang zum WLAN
 
 VHDPlusRemote remote;
 
 void setup() {
     Serial.begin(115200);
+    Serial.setTimeout(1);
     delay(10);
     
     Serial.print("\nConnect to ");
@@ -69,6 +70,7 @@ void onButton(String hook){
 }
 
 void onSlider(String hook, int value){
+    if (hook == "s") value = value*255/100;
     Serial.print(hook+value);
 }
 
