@@ -20,6 +20,17 @@ Main
 
 )
 {
+
+    Function f_log2 (return natural; x : positive )
+    {
+        variable i : natural;
+        i := 0;
+        While((2**i < x) and i < 31)
+        {
+            i := i + 1;
+        }
+        return i;
+    }
     
 --GENERATED SIGNALS---------------------------------------------------------------------------------------------
 
@@ -68,9 +79,9 @@ Main
     --------------------------------------------------------------------------------
     --The Controller keeps driving while Drive_L > Driven_L and Drive_R > Driven_R--
     --------------------------------------------------------------------------------
-    
-    CONSTANT Max_Length : NATURAL := 10000;
 
+    CONSTANT Max_Length : NATURAL := 10000;
+    
     SIGNAL Motor_RST_Drive           : STD_LOGIC := '0';                     --'1' => Controller sets Driven to 0
     SIGNAL Motor_Drive_L             : INTEGER   range (-1*Max_Length) to Max_Length := 0; --Sets distance to drive with the left motor
     SIGNAL Motor_Drive_R             : INTEGER   range (-1*Max_Length) to Max_Length := 0; --Sets distance to drive with the right motor
@@ -82,7 +93,7 @@ Main
     SIGNAL Motor_Error               : STD_LOGIC;                            --'1' if a motor doesn't turn or there is a problem with the encoder
     SIGNAL Current_Speed_L           : NATURAL   range 0 to Max_Length := 0;
     SIGNAL Current_Speed_R           : NATURAL   range 0 to Max_Length := 0;
-    
+
     --WiFi Extension----------------------------------------------------------------------------------------
 
     --Program_Mode = '0'
@@ -115,22 +126,13 @@ Main
     SIGNAL Drive_Length   : NATURAL range 0 to Max_Length := 100;
     SIGNAL Drive_Speed    : NATURAL range 0 to 255 := 230;
     SIGNAL Drive_Direcion : NATURAL range 0 to 3 := 0; --0 = forward, 1 = left, 2 = right, 3 = backwards
-    --Motor_Error
-    --Current_Speed_L
-    --Current_Speed_R
-    
+
     Process Motor_Control ()
     {
-        If(Stop = '0')
-        {
-            Stopped <= '0';
-        }
-        
         Thread
         {
             VARIABLE Right_Direction : INTEGER range -1 to 1 := 1;
             VARIABLE Left_Direction  : INTEGER range -1 to 1 := 1;
-            
             Drive_Running <= '0';
             While(Drive_Start = '0'){} --Wait for drive start
             Drive_Running <= '1';
@@ -153,11 +155,11 @@ Main
                     Motor_Drive_R <= 0;
                     Motor_RST_Drive <= '1';
                     Step { Motor_RST_Drive <= '0'; }
-                    Stopped <= '1';
                 }
             }
         }
     }
+    
     
     Process State_Update ()
     {
@@ -202,36 +204,47 @@ Main
     }
 
     --WiFi Extension----------------------------------------------------------------------------------------
-    
+
     CONSTANT Max_Route_Elements : NATURAL := 100;
     CONSTANT Routes             : NATURAL := 3;
     
-    TYPE Length_Array_Type    IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to Max_Length;
-    TYPE Length_Type          IS ARRAY (0 to Routes-1)               OF Length_Array_Type;
-    TYPE Speed_Array_Type     IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to 255;
-    TYPE Speed_Type           IS ARRAY (0 to Routes-1)               OF Speed_Array_Type;
-    TYPE Direction_Array_Type IS ARRAY (0 to Max_Route_Elements-1) OF NATURAL range 0 to 3;
-    TYPE Direction_Type       IS ARRAY (0 to Routes-1)               OF Direction_Array_Type;
+    CONSTANT Length_Bits    : NATURAL := f_log2(Max_Length);
+    CONSTANT Speed_Bits     : NATURAL := 8; --0-255
+    CONSTANT Direction_Bits : NATURAL := 2; --0-3
+    
+    TYPE Route_Type IS ARRAY (0 to (Max_Route_Elements*Routes)-1) OF STD_LOGIC_VECTOR((Length_Bits+Speed_Bits+Direction_Bits)-1 downto 0);
+    SIGNAL Route_RAM   : Route_Type;
+    SIGNAL Address_In  : NATURAL range 0 to (Max_Route_Elements*Routes)-1 := 0;
+    SIGNAL Address_Out : NATURAL range 0 to (Max_Route_Elements*Routes)-1 := 0;
+    SIGNAL Data_In     : STD_LOGIC_VECTOR((Length_Bits+Speed_Bits+Direction_Bits)-1 downto 0) := (others => '0');
+    SIGNAL Data_Out    : STD_LOGIC_VECTOR((Length_Bits+Speed_Bits+Direction_Bits)-1 downto 0) := (others => '0');
+    
+    Process ()
+    {
+        Route_RAM(Address_In) <= Data_In;
+    }
+    Data_Out <= Route_RAM(Address_Out);
+    
     TYPE Element_Type         IS ARRAY (0 to Routes-1)               OF NATURAL range 0 to Max_Route_Elements;
-
-    SIGNAL Elements      : Element_Type := (others => 0);
-    SIGNAL Lengths       : Length_Type;
-    SIGNAL Speeds        : Speed_Type;
-    SIGNAL Directions    : Direction_Type;
-    SIGNAL Current_Route : NATURAL range 0 to Routes := 0;
-    SIGNAL Return_Route  : NATURAL range 0 to Routes := 0;
-    SIGNAL Edit_Route    : NATURAL range 0 to Routes := 0;
-    SIGNAL Stop          : STD_LOGIC := '0';
-    SIGNAL Stopped       : STD_LOGIC := '0';
+    SIGNAL Elements      : Element_Type := (others => 0);  --Number of route elements
+    SIGNAL Current_Route : NATURAL range 0 to Routes := 0; --Selected route (0 = wait)
+    SIGNAL Return_Route  : NATURAL range 0 to Routes := 0; --Selected route to return (0 = wait)
+    SIGNAL Edit_Route    : NATURAL range 0 to Routes := 0; --Selected route to edit (0 = wait)
+    SIGNAL Stop          : STD_LOGIC := '0';               --Request to stop motor
+    
+    SIGNAL ISSP_probe  : std_logic_vector (31 downto 0) := (others => 'X');
+    NewComponent ISSP
+    (
+        probe  =>ISSP_probe,
+    );
     
     Process WiFi_Control ()
     {
-        If(Stopped = '1')
+        If(Drive_Running = '0')
         {
             Stop <= '0';
         }
         
-        --Receive Thread
         Thread
         {
             --Receive message from wifi module
@@ -276,6 +289,7 @@ Main
                     Current_Route <= 0;
                     Return_Route  <= 0;
                     Edit_Route    <= data;
+                    Elements (data-1) <= 0;
                 }
                 When(s"m")
                 {
@@ -288,10 +302,14 @@ Main
                         --Save route
                         If(Edit_Route > 0)
                         {
-                            Elements  (Edit_Route-1)                       <= Elements(Edit_Route-1) + 1;
-                            Lengths   (Edit_Route-1)(Elements(Edit_Route)) <= Drive_Length;
-                            Speeds    (Edit_Route-1)(Elements(Edit_Route)) <= Drive_Speed;
-                            Directions(Edit_Route-1)(Elements(Edit_Route)) <= Drive_Direcion;
+                            Elements (Edit_Route-1) <= Elements(Edit_Route-1) + 1;
+                            Address_In <= ((Edit_Route-1)*Max_Route_Elements)+Elements(Edit_Route-1);
+                            Data_In((Length_Bits+Speed_Bits+Direction_Bits)-1 downto (Speed_Bits+Direction_Bits))
+                            <= STD_LOGIC_VECTOR(TO_UNSIGNED(Drive_Length, Length_Bits));
+                            Data_In((Speed_Bits+Direction_Bits)-1 downto Direction_Bits)
+                            <= STD_LOGIC_VECTOR(TO_UNSIGNED(Drive_Speed, Speed_Bits));
+                            Data_In(Direction_Bits-1 downto 0)
+                            <= STD_LOGIC_VECTOR(TO_UNSIGNED(Drive_Direcion, Direction_Bits));
                         }
                         While(Drive_Running = '1'){}
                     }
@@ -326,16 +344,23 @@ Main
         {
             --Wait until Robot should drive route
             While(Current_Route = 0 AND Return_Route = 0){}
-            VARIABLE Element_Step : NATURAL range 0 to Max_Route_Elements := 0;
-            VARIABLE Element_End  : NATURAL range 0 to Max_Route_Elements := 0;
+            VARIABLE Return_En    : BOOLEAN := false;
+            VARIABLE Route_Reg    : NATURAL range 0 to Routes := 0;
+            VARIABLE Element_Step : INTEGER range -1 to Max_Route_Elements := 0;
+            VARIABLE Element_End  : INTEGER range -1 to Max_Route_Elements := 0;
             Element_Step := 0;
+            Element_End  := -1;
             If(Current_Route > 0)
             {
-                Element_Step := Elements(Current_Route-1);
+                Element_End := Elements(Current_Route-1);
+                Return_En   := false;
+                Route_Reg   := Current_Route;
             }
             Else
             {
-                Element_Step := Elements(Return_Route-1);
+                Element_Step := Elements(Return_Route-1)-1;
+                Return_En    := true;
+                Route_Reg    := Return_Route;
             }
             VARIABLE Current_Route_Reg : NATURAL range 0 to Routes := 0;
             VARIABLE Return_Route_Reg  : NATURAL range 0 to Routes := 0;
@@ -344,28 +369,42 @@ Main
             --Drive route until ready or route stopped
             If(Current_Route /= 0 OR Return_Route /= 0)
             {
-                While(Current_Route = Current_Route_Reg AND Return_Route = Return_Route_Reg AND Element_Step < Element_End)
+                While(Current_Route = Current_Route_Reg AND Return_Route = Return_Route_Reg AND Element_Step /= Element_End)
                 {
-                    If(Current_Route > 0)
+                    Step
                     {
-                        Drive_Direcion <= Directions(Current_Route-1)(Element_Step);
+                        Address_Out <= ((Route_Reg-1)*Max_Route_Elements)+Element_Step;
+                    }
+                    If(Return_En)
+                    {
+                        Drive_Direcion <= 3-TO_INTEGER(UNSIGNED(Data_Out(Direction_Bits-1 downto 0)));
                     }
                     Else
                     {
                         --Do the same backwards
-                        Drive_Direcion <= 3-Directions(Current_Route-1)(Element_Step);
+                        Drive_Direcion <= TO_INTEGER(UNSIGNED(Data_Out(Direction_Bits-1 downto 0)));
                     }
-                    Drive_Speed    <= Speeds    (Current_Route-1)(Element_Step);
-                    Drive_Length   <= Lengths   (Current_Route-1)(Element_Step);
+                    Drive_Speed    <= TO_INTEGER(UNSIGNED(Data_Out((Speed_Bits+Direction_Bits)-1 downto Direction_Bits)));
+                    Drive_Length   <= TO_INTEGER(UNSIGNED(Data_Out((Length_Bits+Speed_Bits+Direction_Bits)-1 downto (Speed_Bits+Direction_Bits))));
                     Drive_Start    <= '1';
                     While(Drive_Running = '0'){}
                     Drive_Start    <= '0';
-                    Element_Step := Element_Step + 1;
+                    If(Return_En)
+                    {
+                        Element_Step := Element_Step - 1;
+                    }
+                    Else
+                    {
+                        Element_Step := Element_Step + 1;
+                    }
+                    While(Drive_Running = '1'){}
                 }
+                Current_Route <= 0;
+                Return_Route  <= 0;
             }
         }
     }
-
+    
     --Press Button to switch between program and normal mode
     Process Program_Control () {
         Thread {
@@ -379,7 +418,7 @@ Main
     LED <= Program_Mode;
 
     --Sends data from UART Interface to PC and ESP8266
-    TX <= WiFi_TX when Program_Mode = '1' else UART_TX;
+    TX <= WiFi_TX when Program_Mode = '1' else UART_TX AND WiFi_TX;
     WiFi_RX <= RX when Program_Mode = '1' else UART_TX;
     --Receive Data from PC and ESP8266
     UART_RX <= WiFi_TX AND RX when Program_Mode = '0' else '1';
@@ -391,7 +430,7 @@ Main
 
     NewComponent Motor_Controller
     (
-        CLK_Frequency       => 12000000,
+        Clk_Frequency       => 12000000,
         PWM_Frequency       => 100000,
         Bits_Resolution     => 8,
         Holes_In_Disk       => Motor_Holes_In_Disk,
