@@ -1,0 +1,155 @@
+Component Remote_Robot_tb()
+{
+    --UART l.144 -> 1200000 -> 12000 for simulation
+    
+    SIGNAL finished : STD_LOGIC:= '0';
+    CONSTANT period_time : TIME := 83333 ps;
+
+    Process Sim_finished()
+    {
+        wait for 100000 us;
+        finished <= '1';
+        wait;
+    }
+
+    NewComponent WiFi_Robot_Demo
+    (
+        Encoder_L => Encoder_L,
+        Encoder_R => Encoder_R,
+        Motor_LF => Motor_LF,
+        Motor_LB => Motor_LB,
+        Motor_RF => Motor_RF,
+        Motor_RB => Motor_RB,
+        BTN => BTN,
+        LED => LED,
+        RX => RX,
+        TX => TX,
+        WiFi_TX => WiFi_TX,
+        WiFi_RX => WiFi_RX,
+        CLK => CLK,
+    );
+
+    SIGNAL Encoder_L : STD_LOGIC ;
+    SIGNAL Encoder_R : STD_LOGIC ;
+    SIGNAL Motor_LF : STD_LOGIC ;
+    SIGNAL Motor_LB : STD_LOGIC ;
+    SIGNAL Motor_RF : STD_LOGIC ;
+    SIGNAL Motor_RB : STD_LOGIC ;
+    SIGNAL BTN : STD_LOGIC ;
+    SIGNAL LED : STD_LOGIC ;
+    SIGNAL RX : STD_LOGIC := '1';
+    SIGNAL TX : STD_LOGIC ;
+    SIGNAL WiFi_TX : STD_LOGIC ;
+    SIGNAL WiFi_RX : STD_LOGIC ;
+    SIGNAL CLK : STD_LOGIC := '0';
+
+
+    Process Sim_BTN()
+    {
+        While(finished /= '1')
+        {
+            BTN <= '0';
+            wait for period_time;
+            BTN <= '1';
+            wait for period_time*2;
+            BTN <= '0';
+            wait for period_time;
+            wait;
+        }
+        wait;
+    }
+
+    
+    Process Sim_Encoder_L()
+    {
+        While(finished /= '1')
+        {
+            Encoder_L <= '0';
+            wait for 50 us;
+            Encoder_L <= '1';
+            wait for 50 us;
+            
+        }
+        wait;
+    }
+
+    Process Sim_Encoder_R()
+    {
+        While(finished /= '1')
+        {
+            Encoder_R <= '0';
+            wait for 50 us;
+            Encoder_R <= '1';
+            wait for 50 us;
+            
+        }
+        wait;
+    }
+
+    Process Sim_WiFi_TX()
+    {
+        While(finished /= '1')
+        {
+            wait for period_time;
+            Thread
+            {
+                Wait(1200us);
+                NewFunction write (s"l", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"5", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(1200us);
+                NewFunction write (s"n", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"1", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(1200us);
+                NewFunction write (s"m", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"0", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(10ms);
+                NewFunction write (s"m", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"1", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(10ms);
+                NewFunction write (s"m", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"4", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(1200us);
+                NewFunction write (s"r", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"1", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(10ms);
+                NewFunction write (s"b", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"1", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(10ms);
+                NewFunction write (s"r", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                NewFunction write (s"1", UART_Interface_TX_Data, UART_Interface_TX_Busy, UART_Interface_TX_Enable);
+                Wait(10ms);
+            }
+        }
+        wait;
+    }
+
+    Process Sim_CLK()
+    {
+        While(finished /= '1')
+        {
+            CLK <= '0';
+            wait for period_time/2;
+            CLK <= '1';
+            wait for period_time/2;
+        }
+        wait;
+    }
+    
+    SIGNAL UART_Interface_TX_Enable     : STD_LOGIC := '0';
+    SIGNAL UART_Interface_TX_Busy       : STD_LOGIC := '0';
+    SIGNAL UART_Interface_TX_Data       : STD_LOGIC_VECTOR (8-1 DOWNTO 0) := (others => '0');
+    NewComponent UART_Interface
+    (
+        CLK_Frequency => 12000000,
+        Baud_Rate     => 115200,
+        OS_Rate       => 16,
+        D_Width       => 8,
+        Parity        => 0,
+        Parity_EO     => '0',
+
+        TX            => WiFi_TX,
+        TX_Enable     =>UART_Interface_TX_Enable,
+        TX_Busy       =>UART_Interface_TX_Busy,
+        TX_Data       =>UART_Interface_TX_Data,
+    );
+}
